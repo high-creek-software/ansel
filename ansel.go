@@ -3,6 +3,7 @@ package ansel
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/widget"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"log"
 	"sync"
 )
@@ -16,7 +17,7 @@ type ResourceSetter interface {
 }
 
 type Ansel[I comparable] struct {
-	cache   map[string]fyne.Resource
+	cache   *lru.Cache[string, fyne.Resource]
 	pending map[I]ResourceSetter
 	cancel  map[*widget.Icon]I
 	locker  sync.RWMutex
@@ -28,9 +29,13 @@ type Ansel[I comparable] struct {
 	workChan    chan unit[I]
 }
 
-func NewAnsel[I comparable](opts ...AnselConfig[I]) *Ansel[I] {
+func NewAnsel[I comparable](cacheSize int, opts ...AnselConfig[I]) *Ansel[I] {
+	cache, err := lru.New[string, fyne.Resource](cacheSize)
+	if err != nil {
+		log.Println("error creating cache", err)
+	}
 	a := &Ansel[I]{
-		cache:       make(map[string]fyne.Resource),
+		cache:       cache,
 		pending:     make(map[I]ResourceSetter),
 		cancel:      make(map[*widget.Icon]I),
 		loader:      LoadHTTP,
@@ -65,7 +70,7 @@ func (a *Ansel[I]) worker() {
 
 func (a *Ansel[I]) doLoad(u unit[I]) {
 	a.locker.RLock()
-	if resource, ok := a.cache[u.source]; ok {
+	if resource, ok := a.cache.Get(u.source); ok {
 		u.target.SetResource(resource)
 		a.locker.RUnlock()
 		return
@@ -87,7 +92,7 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 			data = a.loadedCallback(data)
 		}
 		res := fyne.NewStaticResource(u.source, data)
-		a.cache[u.source] = res
+		a.cache.Add(u.source, res)
 		if icn, ok := a.pending[u.id]; ok {
 			icn.SetResource(res)
 		}
