@@ -2,7 +2,6 @@ package ansel
 
 import (
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/widget"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"log"
 	"sync"
@@ -19,7 +18,7 @@ type ResourceSetter interface {
 type Ansel[I comparable] struct {
 	cache   *lru.Cache[string, fyne.Resource]
 	pending map[I]ResourceSetter
-	cancel  map[*widget.Icon]I
+	cancel  map[ResourceSetter]I
 	locker  sync.RWMutex
 
 	loader         Loader
@@ -37,7 +36,7 @@ func NewAnsel[I comparable](cacheSize int, opts ...AnselConfig[I]) *Ansel[I] {
 	a := &Ansel[I]{
 		cache:       cache,
 		pending:     make(map[I]ResourceSetter),
-		cancel:      make(map[*widget.Icon]I),
+		cancel:      make(map[ResourceSetter]I),
 		loader:      LoadHTTP,
 		workerCount: 10,
 	}
@@ -80,10 +79,12 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 	a.locker.Lock()
 	if _, ok := a.pending[u.id]; ok {
 		a.pending[u.id] = u.target
+		a.cancel[u.target] = u.id
 		a.locker.Unlock()
 		return
 	}
 	a.pending[u.id] = u.target
+	a.cancel[u.target] = u.id
 	a.locker.Unlock()
 
 	if data, err := a.loader(u.source); err == nil {
@@ -93,13 +94,20 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 		}
 		res := fyne.NewStaticResource(u.source, data)
 		a.cache.Add(u.source, res)
-		if icn, ok := a.pending[u.id]; ok {
-			icn.SetResource(res)
+		if id, ok := a.cancel[u.target]; ok {
+			if id != u.id {
+				delete(a.cancel, u.target)
+			}
+		} else {
+			if icn, ok := a.pending[u.id]; ok {
+				icn.SetResource(res)
+			}
 		}
 		delete(a.pending, u.id)
 		a.locker.Unlock()
 
 	} else {
+		// TODO: Have an error image than can be used here.
 		log.Println("error loading resource", err)
 	}
 }
