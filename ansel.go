@@ -24,6 +24,9 @@ type Ansel[I comparable] struct {
 	loader         Loader
 	loadedCallback LoaderCallback
 
+	loadingImage fyne.Resource
+	failedImage  fyne.Resource
+
 	workerCount int
 	workChan    chan unit[I]
 }
@@ -85,6 +88,9 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 	}
 	a.pending[u.id] = u.target
 	a.cancel[u.target] = u.id
+	if a.loadingImage != nil {
+		u.target.SetResource(a.loadingImage)
+	}
 	a.locker.Unlock()
 
 	if data, err := a.loader(u.source); err == nil {
@@ -94,10 +100,10 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 		}
 		res := fyne.NewStaticResource(u.source, data)
 		a.cache.Add(u.source, res)
-		if id, ok := a.cancel[u.target]; ok {
-			if id != u.id {
-				delete(a.cancel, u.target)
-			}
+		if id, ok := a.cancel[u.target]; ok && id != u.id {
+
+			delete(a.cancel, u.target)
+
 		} else {
 			if icn, ok := a.pending[u.id]; ok {
 				icn.SetResource(res)
@@ -109,6 +115,20 @@ func (a *Ansel[I]) doLoad(u unit[I]) {
 	} else {
 		// TODO: Have an error image than can be used here.
 		log.Println("error loading resource", err)
+		a.locker.Lock()
+		if id, ok := a.cancel[u.target]; ok && id != u.id {
+
+			delete(a.cancel, u.target)
+
+		} else {
+			if a.failedImage != nil {
+				if icn, ok := a.pending[u.id]; ok {
+					icn.SetResource(a.failedImage)
+				}
+			}
+		}
+		delete(a.pending, u.id)
+		a.locker.Unlock()
 	}
 }
 
@@ -127,5 +147,17 @@ func SetLoadedCallback[I comparable](loadedCallback LoaderCallback) AnselConfig[
 func SetWorkerCount[I comparable](count int) AnselConfig[I] {
 	return func(a *Ansel[I]) {
 		a.workerCount = count
+	}
+}
+
+func SetLoadingImage[I comparable](img fyne.Resource) AnselConfig[I] {
+	return func(a *Ansel[I]) {
+		a.loadingImage = img
+	}
+}
+
+func SetFailedImage[I comparable](img fyne.Resource) AnselConfig[I] {
+	return func(a *Ansel[I]) {
+		a.failedImage = img
 	}
 }
