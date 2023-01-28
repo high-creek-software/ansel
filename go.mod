@@ -1,4 +1,4 @@
-module gitlab.com/high-creek-software/ansel
+module github.com/high-creek-software/ansel
 
 go 1.19
 
